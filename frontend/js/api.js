@@ -1,5 +1,4 @@
-// Central place for all API calls — same pattern as CineSpot utils/
-// Every call goes through apiFetch so credentials (cookies) are always sent.
+
 
 const BASE = "/api/v1"
 

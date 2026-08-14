@@ -88,11 +88,3 @@ Add `timeoutMs: { type: Number, default: 10000, min: 1000, max: 30000 }` to the 
 
 **Frontend webhook config**
 The backend supports webhookUrl and alertThreshold but the frontend add-monitor form doesn't expose them yet. Add two optional fields to the form.
-
----
-
-## Code Attribution
-
-ApiError, ApiResponse, asyncHandler, verifyJWT middleware, cookie-based JWT auth pattern, and connectDB are modelled on my prior CineSpot project (my own code). The core of URLPulse — checker.service.js, scheduler.service.js, webhook alert logic, Monitor and Check models, and all frontend JS — is original to this project.
-
-The project structure, inline comments explaining decisions, and README were written with AI assistance (Claude). All code is my own or reviewed and understood line by line.

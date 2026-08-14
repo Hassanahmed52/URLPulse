@@ -9,9 +9,6 @@ const PORT = process.env.PORT || 3000
 
 connectDB()
     .then(async () => {
-        // Start all active monitors after DB is ready.
-        // This is what makes checks survive restarts — we reload
-        // all isActive monitors from DB and restart their intervals.
         await initScheduler()
 
         app.listen(PORT, () => {
