@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register — URLPulse</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 min-h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-md bg-gray-800 rounded-2xl shadow-xl p-8">
+        <h1 class="text-3xl font-bold text-white text-center mb-1">🔍 URLPulse</h1>
+        <p class="text-gray-400 text-center mb-8">Create an account to start monitoring.</p>
+
+        <div id="errorMsg" class="hidden bg-red-900 border border-red-700 text-red-300 px-4 py-3 rounded-lg mb-4 text-sm"></div>
+
+        <form id="registerForm" class="space-y-5">
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Username</label>
+                <input id="username" type="text" required placeholder="johndoe"
+                    class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Email</label>
+                <input id="email" type="email" required placeholder="you@example.com"
+                    class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Password</label>
+                <input id="password" type="password" required placeholder="••••••••"
+                    class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500">
+            </div>
+            <button type="submit"
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition">
+                Create Account
+            </button>
+        </form>
+        <p class="text-center text-gray-400 text-sm mt-6">
+            Have an account? <a href="/login.html" class="text-indigo-400 hover:underline">Login</a>
+        </p>
+    </div>
+    <script type="module">
+        import { register, getMe } from "/js/api.js"
+        try { await getMe(); window.location.href = "/" } catch {}
+        document.getElementById("registerForm").addEventListener("submit", async (e) => {
+            e.preventDefault()
+            const errorMsg = document.getElementById("errorMsg")
+            errorMsg.classList.add("hidden")
+            try {
+                await register({
+                    username: document.getElementById("username").value,
+                    email: document.getElementById("email").value,
+                    password: document.getElementById("password").value
+                })
+                window.location.href = "/"
+            } catch (err) {
+                errorMsg.textContent = err.message
+                errorMsg.classList.remove("hidden")
+            }
+        })
+    </script>
+</body>
+</html>
