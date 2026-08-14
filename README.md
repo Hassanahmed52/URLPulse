@@ -24,67 +24,181 @@ MongoDB data is stored in a named Docker volume (`mongo_data`) and persists acro
 
 ---
 
+## Tech Stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| Runtime | Node.js 20 | Async I/O fits a polling workload naturally |
+| Framework | Express 4 | Minimal, no magic, every line is explainable |
+| Database | MongoDB 7 + Mongoose | TTL index handles data cleanup automatically, flexible schema |
+| HTTP client | Axios | Clean timeout config and typed error codes on failures |
+| Auth | JWT + bcrypt | Stateless tokens, HttpOnly cookies, no session store needed |
+| Frontend | Vanilla HTML/JS + Tailwind CDN | No build step, zero dependencies, loads fast |
+| Container | Docker + Docker Compose | One command startup, isolated environment |
+
+---
+
+## Project Structure
+
+
+URLPulse/
+├── backend/
+│   ├── src/
+│   │   ├── index.js                  ← entry point, connects DB then starts server
+│   │   ├── app.js                    ← express setup, middleware, routes, error handler
+│   │   ├── constants.js              ← CHECK_TIMEOUT_MS, DB_NAME
+│   │   ├── db/
+│   │   │   └── index.js              ← mongoose connection
+│   │   ├── models/
+│   │   │   ├── user.model.js         ← user schema, bcrypt, JWT methods
+│   │   │   ├── monitor.model.js      ← URL config + webhook fields + failure counter
+│   │   │   └── check.model.js        ← one document per HTTP probe, TTL index
+│   │   ├── controllers/
+│   │   │   ├── auth.controllers.js   ← register, login, logout, refresh token
+│   │   │   └── monitor.controllers.js← CRUD, uptime calc, enriched responses
+│   │   ├── services/
+│   │   │   ├── checker.service.js    ← does the HTTP GET, classifies errors, fires webhooks
+│   │   │   └── scheduler.service.js  ← Map of setIntervals, one per monitor
+│   │   ├── middlewares/
+│   │   │   └── auth.middleware.js    ← verifyJWT, attaches req.user
+│   │   └── routes/
+│   │       ├── auth.routes.js        ← /api/v1/auth/*
+│   │       └── monitor.routes.js     ← /api/v1/monitors/* (all protected)
+│   └── Dockerfile
+├── frontend/
+│   ├── index.html                    ← dashboard, monitor list + add form
+│   ├── monitor.html                  ← detail view, recent checks table
+│   ├── login.html
+│   ├── register.html
+│   └── js/
+│       ├── api.js                    ← all fetch calls, credentials always sent
+│       ├── index.js                  ← dashboard logic, auto-refresh
+│       └── monitor.js                ← detail page logic, auto-refresh
+└── docker-compose.yml
+
+---
+
+## How Data Flows
+
+User registers / logs in
+        ↓
+JWT access token set in HttpOnly cookie (15m)
+Refresh token stored in DB (7d), rotated on every refresh
+        ↓
+User adds a monitor (name, URL, interval, optional webhookUrl + alertThreshold)
+        ↓
+POST /api/v1/monitors
+        ↓
+Monitor document saved in MongoDB
+        ↓
+scheduler.service.js → startMonitor()
+  - fires first check immediately (user sees result right away)
+  - sets a setInterval for every subsequent check
+        ↓
+Every N seconds: checker.service.js → checkUrl()
+  - axios.GET(url) with 10s timeout
+  - records: isUp, statusCode, responseTimeMs, error string
+  - saves a Check document to MongoDB
+  - if isUp=false: increments consecutiveFailures on Monitor
+  - if consecutiveFailures >= alertThreshold: fires POST to webhookUrl
+  - if isUp=true: resets consecutiveFailures to 0
+        ↓
+Frontend polls GET /api/v1/monitors and GET /api/v1/monitors/:id every 30s
+  - shows current status, uptime %, avg response time, last 20 checks
+        ↓
+On app restart:
+  - connectDB() resolves
+  - initScheduler() loads all isActive monitors from DB
+  - restarts their setIntervals — checks resume without any user action
+
+---
+
+## API Endpoints
+
+All monitor endpoints require the `AccessToken` cookie (set at login).
+
+### Auth
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/auth/register` | Register, returns tokens in cookies |
+| POST | `/api/v1/auth/login` | Login, returns tokens in cookies |
+| POST | `/api/v1/auth/logout` | Clears cookies, invalidates refresh token |
+| POST | `/api/v1/auth/refresh-token` | Rotates access + refresh token |
+| GET | `/api/v1/auth/me` | Returns current user |
+
+### Monitors
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/monitors` | Create monitor, starts checking immediately |
+| GET | `/api/v1/monitors` | List all your monitors with current status + uptime |
+| GET | `/api/v1/monitors/:id` | Detail view — last 20 checks, avg response, stats |
+| DELETE | `/api/v1/monitors/:id` | Delete monitor + all its check history |
+
+### Monitor create body
+{
+  "name": "My Site",
+  "url": "https://example.com",
+  "intervalSeconds": 60,
+  "webhookUrl": "https://webhook.site/your-id",
+  "alertThreshold": 3
+}
+
+`webhookUrl` and `alertThreshold` are optional. Default threshold is 3.
+
+---
+
 ## What's Built
 
 ### Core
-- **Monitor management** — add, list, delete monitored URLs. Each monitor has a name, URL, check interval (30s minimum), and optional webhook config
-- **Background checking** — each monitor runs on its own independent `setInterval`. No manual trigger needed. First check fires immediately on creation so you see a result right away
-- **Per-check recording** — every check stores HTTP status code, response time in ms, timestamp, up/down flag, and a classified error string (`timeout`, `dns_error`, `connection_refused`, `HTTP_404`, etc.)
-- **Monitor detail view** — current status (up/down), uptime % over last 24h, total checks in 24h, average response time (up checks only), last 20 checks with full detail
-- **Persistence** — MongoDB with Docker volume. Scheduler reloads active monitors on startup
-- **One command startup** — `docker-compose up --build`
+- Monitor management — add, list, delete URLs with name, interval, webhook config
+- Background checking — independent `setInterval` per monitor, first check fires immediately
+- Per-check recording — status code, response time, timestamp, up/down, classified error
+- Monitor detail — uptime % (24h), total checks, avg response time, last 20 checks
+- Persistence — Docker volume, scheduler reloads on restart
+- One command startup
 
-### Auth (stretch requirement)
-- JWT authentication — access token (15m) in HttpOnly cookie, refresh token (7d) stored in DB and rotated on every refresh
-- Monitors are per-user — you only see and manage your own
+### Stretch
+- JWT auth with refresh token rotation — monitors are per-user
+- Webhook alerts — POST on N consecutive failures, re-alerts every N additional failures, resets on recovery
 
-### Webhook alerts (stretch requirement)
-- Optional `webhookUrl` per monitor
-- Configurable `alertThreshold` — how many consecutive failures before firing (default: 3)
-- Fires a POST with monitor name, URL, failure count, and timestamp
-- Re-alerts every additional `alertThreshold` failures so silence doesn't mean resolved
-- Resets automatically when the site recovers
-
-### What's not built
+### Not built
 - Rate limiting on the API
-- Pagination on check history (returns last 20, hardcoded)
-- Email/SMS alerts (webhook covers the notification layer — integrates with anything that accepts a POST)
-- Edit monitor (update interval or webhook URL without delete/recreate)
+- Pagination on check history (last 20, hardcoded)
+- Edit monitor (change interval or webhook URL without delete/recreate)
+- Frontend form fields for webhookUrl and alertThreshold (configure via API/curl for now)
 
 ---
 
 ## Three Decisions I Made
 
 ### 1. setInterval per monitor, not a job queue — deliberate simpler choice
-Each monitor needs its own independent schedule. I could have used Bull/BullMQ with Redis, or node-cron with a distributed lock. I chose a plain `Map` of `setInterval` handles — one entry per monitor ID. It's about 40 lines of code, zero extra dependencies, and every line is explainable.
+Each monitor needs its own independent schedule. I could have used Bull/BullMQ with Redis or node-cron. I chose a plain `Map` of `setInterval` handles — one entry per monitor ID. It is about 40 lines of code, zero extra dependencies, and every line is explainable.
 
-The tradeoff: if two instances of URLPulse run simultaneously, both Maps start and every URL gets checked twice. The fix is a distributed lock — attempt a `findOneAndUpdate` on a `SchedulerLock` collection with a TTL before each check, skip if another instance holds it. I deliberately didn't build this. It's complexity that isn't needed for a single-process service and would have taken 2–3 hours that were better spent on the checker and webhook logic.
+The tradeoff: if two instances of URLPulse run simultaneously, both Maps start and every URL gets checked twice. The fix is a distributed lock — attempt a `findOneAndUpdate` on a lock document with a TTL before each check, skip if another instance holds it. I deliberately did not build this. It is complexity that is not needed for a single-process service and would have taken time better spent on the checker and webhook logic.
 
 ### 2. Fixed 10-second HTTP timeout
-A site that hangs and never responds would block a checker indefinitely without a hard timeout. I set `timeout: 10000` in the axios config. When it fires, axios throws with `err.code === "ECONNABORTED"`. The catch block records `responseTimeMs = 10000`, `isUp = false`, `error = "timeout"` and the scheduler interval moves on normally.
+A site that hangs and never responds would block a checker indefinitely without a hard timeout. I set `timeout: 10000` in the axios config. When it fires, axios throws with `err.code === "ECONNABORTED"`. The catch block records `responseTimeMs = 10000`, `isUp = false`, `error = "timeout"` and the interval moves on normally.
 
-I chose a fixed value rather than per-monitor configurable timeout to keep the Monitor model simple. Adding a `timeoutMs` field would be a 10-minute change — I noted it as a "next week" item instead.
+I chose a fixed value rather than per-monitor configurable timeout to keep the Monitor model simple. Adding a `timeoutMs` field would be a small change — noted as a next-week item.
 
 ### 3. Uptime = checks that ran, not wall clock time
-Naive approach: `(seconds up / total seconds in window) * 100`. Problem: if URLPulse itself was down for 2 hours, those 120 minutes would count against every monitored site even though we never actually checked them.
-
-I count only check documents that exist: `(up checks / total checks) * 100`. If we weren't running, there are no documents for that period — the gap simply doesn't exist in the calculation. This matches how Stripe, GitHub, and other major status pages calculate uptime. The known tradeoff: if both URLPulse and a monitored site were down simultaneously, the site's uptime looks artificially high. That's the honest tradeoff and it's the lesser evil.
+If URLPulse itself was offline for 2 hours, those 120 minutes would count against every monitored site under a wall-clock calculation even though no checks ran. I count only check documents that exist: `(up checks / total checks) * 100`. Gaps where we were not running simply do not exist in the data. This matches how Stripe and GitHub calculate uptime on their status pages. The known tradeoff: if both URLPulse and a monitored site were down simultaneously, the site uptime looks artificially high. That is the honest lesser evil.
 
 ---
 
-## What I'd Do Next With Another Week
+## What I Would Do Next With Another Week
 
 **Distributed duplicate-check prevention**
-If two instances run, every URL is checked twice. Fix: before each check, attempt `Monitor.findOneAndUpdate({ _id, lockedUntil: { $lt: now } }, { lockedUntil: now + intervalSeconds })`. If the update returns null, another instance has the lock — skip. This makes the scheduler horizontally safe without Redis.
+If two instances run, every URL is checked twice. Fix: before each check, attempt `Monitor.findOneAndUpdate({ _id, lockedUntil: { $lt: now } }, { lockedUntil: now + intervalSeconds })`. If the update returns null, another instance holds the lock — skip. No Redis needed.
 
 **Data rollup for long-term trends**
-The TTL index deletes checks after 30 days. For longer history without unbounded storage: a nightly job that aggregates each monitor's checks into hourly summary documents (one doc per hour per monitor: avg response time, up count, down count). Raw checks still expire. Hourly summaries are kept indefinitely and used for the 7-day/30-day uptime graphs.
+The TTL index deletes raw checks after 30 days. For longer history: a nightly job aggregates each monitor's checks into hourly summary documents (avg response time, up count, down count per hour). Raw checks expire. Summaries are kept indefinitely and used for 7-day and 30-day uptime graphs.
 
 **Edit monitor**
-Currently you have to delete and recreate to change the interval or webhook URL. A `PATCH /api/v1/monitors/:id` endpoint that calls `restartMonitor()` when the interval changes would take about an hour to add.
-
-**Per-monitor timeout config**
-Add `timeoutMs: { type: Number, default: 10000, min: 1000, max: 30000 }` to the Monitor model and pass it into `checker.service.js`. Trivial change, meaningful for monitoring slow but legitimate endpoints.
+A `PATCH /api/v1/monitors/:id` endpoint that updates interval or webhook config and calls `restartMonitor()` when the interval changes. About an hour of work.
 
 **Frontend webhook config**
-The backend supports webhookUrl and alertThreshold but the frontend add-monitor form doesn't expose them yet. Add two optional fields to the form.
+The backend supports webhookUrl and alertThreshold but the add-monitor form does not expose them. Two optional input fields in the form.
+
+**Per-monitor timeout config**
+Add `timeoutMs` to the Monitor model, pass it into checker.service.js. Small change, useful for slow but legitimate endpoints.
