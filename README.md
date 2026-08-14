@@ -40,7 +40,7 @@ MongoDB data is stored in a named Docker volume (`mongo_data`) and persists acro
 
 ## Project Structure
 
-
+```
 URLPulse/
 ├── backend/
 │   ├── src/
@@ -75,6 +75,7 @@ URLPulse/
 │       ├── index.js                  ← dashboard logic, auto-refresh
 │       └── monitor.js                ← detail page logic, auto-refresh
 └── docker-compose.yml
+```
 
 ---
 
